@@ -74,6 +74,22 @@ SETUP_STAGE_COLORS = [
     "#EDC948",
 ]
 
+MODEL_MARKERS = {
+    "TGN": "o",
+    "TGAT": "^",
+    "DySAT": "s",
+    "GRAPHSAGE": "D",
+    "GAT": "P",
+}
+
+MODEL_COLORS = {
+    "TGN": "#1f77b4",
+    "TGAT": "#ff7f0e",
+    "DySAT": "#2ca02c",
+    "GRAPHSAGE": "#d62728",
+    "GAT": "#9467bd",
+}
+
 
 @dataclass
 class ProfileRun:
@@ -406,14 +422,19 @@ def metric_values(runs: Sequence[ProfileRun], accessor) -> List[Optional[float]]
 
 
 def plot_metric_bars(ax, runs: Sequence[ProfileRun], title: str, ylabel: str,
-                     values: Sequence[Optional[float]], color: str):
+                     values: Sequence[Optional[float]], color: str,
+                     show_y_labels: bool = True):
     y_positions = list(range(len(runs)))
     heights = [0.0 if value is None else float(value) for value in values]
     ax.barh(y_positions, heights, color=color)
     ax.set_title(title)
     ax.set_xlabel(ylabel)
     ax.set_yticks(y_positions)
-    ax.set_yticklabels([run.wrapped_run_label() for run in runs])
+    if show_y_labels:
+        ax.set_yticklabels([run.wrapped_run_label() for run in runs])
+    else:
+        ax.set_yticklabels([])
+        ax.tick_params(axis="y", left=False, labelleft=False)
     ax.invert_yaxis()
     ax.xaxis.grid(True, alpha=0.25)
     ax.yaxis.grid(False)
@@ -451,16 +472,39 @@ def plot_overview_dashboard(runs: Sequence[ProfileRun], output_path: Path):
     ]
 
     figure_height = max(7.5, len(runs) * 0.72)
-    figure, axes = plt.subplots(2, 4, figsize=(22, figure_height), sharey=True)
+    figure = plt.figure(figsize=(24, figure_height))
+    grid = figure.add_gridspec(
+        2, 5, width_ratios=[3.3, 3.2, 3.2, 3.2, 3.2], wspace=0.14, hspace=0.3)
+    label_axis = figure.add_subplot(grid[:, 0])
+    axes = [
+        figure.add_subplot(grid[0, 1]),
+        figure.add_subplot(grid[0, 2], sharey=label_axis),
+        figure.add_subplot(grid[0, 3], sharey=label_axis),
+        figure.add_subplot(grid[0, 4], sharey=label_axis),
+        figure.add_subplot(grid[1, 1], sharey=label_axis),
+        figure.add_subplot(grid[1, 2], sharey=label_axis),
+        figure.add_subplot(grid[1, 3], sharey=label_axis),
+        figure.add_subplot(grid[1, 4], sharey=label_axis),
+    ]
+
+    y_positions = list(range(len(runs)))
+    label_axis.set_xlim(0, 1)
+    label_axis.set_ylim(-0.5, len(runs) - 0.5)
+    label_axis.invert_yaxis()
+    label_axis.axis("off")
+    label_axis.set_title("Profiled Run", loc="left", pad=10)
+    for y_position, run in zip(y_positions, runs):
+        label_axis.text(
+            0.0, y_position, run.wrapped_run_label(width=28),
+            va="center", ha="left", fontsize=9)
+
     palette = plt.get_cmap("tab10")
-    for axis_index, (axis, (title, ylabel, values)) in enumerate(zip(axes.flat, metric_specs)):
-        plot_metric_bars(axis, runs, title, ylabel, values, palette(0))
-        if axis_index % 4 != 0:
-            axis.set_yticklabels([])
-            axis.set_ylabel("")
+    for axis, (title, ylabel, values) in zip(axes, metric_specs):
+        plot_metric_bars(axis, runs, title, ylabel, values, palette(0),
+                         show_y_labels=False)
 
     figure.suptitle("Profiler Overview", fontsize=16)
-    figure.tight_layout(rect=(0, 0, 1, 0.97))
+    figure.subplots_adjust(left=0.04, right=0.995, top=0.94, bottom=0.06)
     figure.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(figure)
 
@@ -546,10 +590,15 @@ def plot_batch_scaling(runs: Sequence[ProfileRun], output_path: Path):
     use_log_scale = len(all_batch_sizes) >= 3 and \
         max(all_batch_sizes) / min(all_batch_sizes) >= 4
     single_group = len(plotted_groups) == 1
+    unique_models = []
+    for group_runs in plotted_groups:
+        model_name = group_runs[0].model
+        if model_name not in unique_models:
+            unique_models.append(model_name)
 
     figure, axes = plt.subplots(
         2, 3, figsize=(15.5, 8.2), sharex=True, constrained_layout=False)
-    palette = plt.get_cmap("tab10")
+    legend_handles = {}
 
     for axis_index, (axis, (title, ylabel, accessor)) in enumerate(zip(axes.flat, metric_specs)):
         for group_index, group_runs in enumerate(plotted_groups):
@@ -559,15 +608,20 @@ def plot_batch_scaling(runs: Sequence[ProfileRun], output_path: Path):
                 continue
             plotted_y_values = [
                 math.nan if value is None else value for value in y_values]
-            axis.plot(
+            model_name = group_runs[0].model
+            marker = MODEL_MARKERS.get(model_name, "o")
+            color = MODEL_COLORS.get(model_name, "#1f77b4")
+            line, = axis.plot(
                 x_values,
                 plotted_y_values,
-                marker="o",
+                marker=marker,
                 markersize=5.5,
                 linewidth=2.25,
-                color=palette(group_index % 10),
-                label=group_runs[0].batch_group_label(),
+                color=color,
+                label=model_name,
             )
+            if model_name not in legend_handles:
+                legend_handles[model_name] = line
             if single_group:
                 for x_value, y_value in zip(x_values, plotted_y_values):
                     if math.isnan(y_value):
@@ -581,7 +635,7 @@ def plot_batch_scaling(runs: Sequence[ProfileRun], output_path: Path):
                         ha="center",
                         va="bottom",
                         fontsize=8,
-                        color=palette(group_index % 10),
+                        color=color,
                     )
         axis.set_title(title)
         axis.set_ylabel(ylabel)
@@ -595,15 +649,39 @@ def plot_batch_scaling(runs: Sequence[ProfileRun], output_path: Path):
         else:
             axis.set_xlabel("Batch Size")
 
+    common_datasets = sorted({group_runs[0].dataset for group_runs in plotted_groups})
+    common_caches = sorted({group_runs[0].cache for group_runs in plotted_groups})
+    common_world_sizes = sorted({group_runs[0].world_size for group_runs in plotted_groups})
+    common_edge_ratios = sorted({group_runs[0].edge_cache_ratio for group_runs in plotted_groups})
+    common_node_ratios = sorted({group_runs[0].node_cache_ratio for group_runs in plotted_groups})
+    subtitle_parts = []
+    if len(common_datasets) == 1:
+        subtitle_parts.append(f"dataset={common_datasets[0]}")
+    if len(common_caches) == 1:
+        subtitle_parts.append(f"cache={common_caches[0]}")
+    if len(common_world_sizes) == 1:
+        subtitle_parts.append(f"ws={common_world_sizes[0]}")
+    if len(common_edge_ratios) == 1:
+        subtitle_parts.append(f"edge={common_edge_ratios[0]:g}")
+    if len(common_node_ratios) == 1:
+        subtitle_parts.append(f"node={common_node_ratios[0]:g}")
+    subtitle = " | ".join(subtitle_parts)
+
     if not single_group:
         figure.legend(
+            list(legend_handles.values()),
+            list(legend_handles.keys()),
             loc="upper center",
-            bbox_to_anchor=(0.5, 0.955),
-            ncol=min(2, len(plotted_groups)),
+            bbox_to_anchor=(0.5, 0.952),
+            ncol=min(4, len(legend_handles)),
             frameon=False,
         )
         title_y = 0.985
-        top_margin = 0.86
+        if subtitle != "":
+            figure.text(0.5, 0.972, subtitle, ha="center", va="top", fontsize=10)
+            top_margin = 0.84
+        else:
+            top_margin = 0.86
     else:
         subtitle = fill(plotted_groups[0][0].batch_group_label(), width=90)
         figure.text(0.5, 0.952, subtitle, ha="center", va="top", fontsize=10)
