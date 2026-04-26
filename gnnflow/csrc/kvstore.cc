@@ -1,7 +1,5 @@
 #include "kvstore.h"
 
-#include "utils.h"
-
 namespace gnnflow {
 void KVStore::set(const std::vector<Key>& keys, const at::Tensor& values) {
   std::lock_guard<std::mutex> lock(mutex_);

@@ -4,28 +4,43 @@ enable_language(CUDA)
 
 set(TARGET_LIB "libgnnflow")
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 
 # set cuda arch
 set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
+find_package(CUDAToolkit REQUIRED)
 include(FindCUDA/select_compute_arch)
-CUDA_DETECT_INSTALLED_GPUS(INSTALLED_GPU_CCS_1)
-string(STRIP "${INSTALLED_GPU_CCS_1}" INSTALLED_GPU_CCS_2)
-string(REPLACE " " ";" INSTALLED_GPU_CCS_3 "${INSTALLED_GPU_CCS_2}")
-string(REPLACE "." "" CUDA_ARCH_LIST "${INSTALLED_GPU_CCS_3}")
-set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH_LIST})
-message(STATUS "CUDA_ARCH_LIST: ${CUDA_ARCH_LIST}")
+CUDA_DETECT_INSTALLED_GPUS(INSTALLED_GPU_CCS)
+if (NOT INSTALLED_GPU_CCS)
+    set(INSTALLED_GPU_CCS "75")
+endif()
+string(STRIP "${INSTALLED_GPU_CCS}" INSTALLED_GPU_CCS)
+string(REPLACE " " ";" INSTALLED_GPU_CCS "${INSTALLED_GPU_CCS}")
+set(CMAKE_CUDA_ARCHITECTURES "")
+foreach(arch IN LISTS INSTALLED_GPU_CCS)
+    string(REPLACE "." "" arch "${arch}")
+    string(REPLACE "+PTX" "" arch "${arch}")
+    list(APPEND CMAKE_CUDA_ARCHITECTURES "${arch}")
+endforeach()
+list(REMOVE_DUPLICATES CMAKE_CUDA_ARCHITECTURES)
+message(STATUS "CUDA_ARCH_LIST: ${CMAKE_CUDA_ARCHITECTURES}")
 
 # 3rd party
-find_package(PythonLibs REQUIRED)
+set(PYBIND11_FINDPYTHON ON)
+if (DEFINED PYTHON_EXECUTABLE AND NOT DEFINED Python3_EXECUTABLE)
+    set(Python3_EXECUTABLE "${PYTHON_EXECUTABLE}")
+endif()
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 add_subdirectory(third_party/pybind11)
 
 
-include_directories(${PYTHON_INCLUDE_DIRS})
+include_directories(${Python3_INCLUDE_DIRS})
+include_directories(${CUDAToolkit_INCLUDE_DIRS})
 include_directories(${PROJECT_SOURCE_DIR}/gnnflow/csrc)
-include_directories(/usr/local/cuda/include)
 include_directories(third_party/pybind11/include)
 include_directories(third_party/spdlog/include)
 include_directories(third_party/rmm/include)
@@ -44,7 +59,7 @@ target_link_libraries(${TARGET_LIB} PRIVATE absl::flat_hash_map)
 
 find_package(Torch REQUIRED)
 find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_INSTALL_PREFIX}/lib")
-target_link_libraries(${TARGET_LIB} PRIVATE ${TORCH_LIBRARIES} ${TORCH_PYTHON_LIBRARY})
+target_link_libraries(${TARGET_LIB} PRIVATE ${TORCH_LIBRARIES} ${TORCH_PYTHON_LIBRARY} CUDA::curand)
 
 target_compile_options(${TARGET_LIB} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
     --generate-line-info

@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import sysconfig
 
 import torch.utils
 from setuptools import Extension, find_packages, setup
@@ -42,9 +43,29 @@ class CustomBuildExt(build_ext):
             "-DCMAKE_BUILD_TYPE={}".format(config),
             "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
             "-DPYTHON_EXECUTABLE:FILEPATH={}".format(sys.executable),
+            "-DPython3_EXECUTABLE:FILEPATH={}".format(sys.executable),
+            "-DPython3_ROOT_DIR={}".format(sys.prefix),
+            "-DPython3_FIND_VIRTUALENV=ONLY",
             "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={}".format(build_dir),
             "-DCMAKE_PREFIX_PATH={}".format(torch.utils.cmake_prefix_path),
         ]
+
+        python_library = sysconfig.get_config_var("LIBRARY")
+        python_libdir = sysconfig.get_config_var("LIBDIR")
+        if python_library and python_libdir:
+            cmake_args.extend([
+                "-DPython3_LIBRARY={}".format(
+                    os.path.join(python_libdir, python_library)),
+                "-DPYTHON_LIBRARY={}".format(
+                    os.path.join(python_libdir, python_library)),
+            ])
+
+        python_include_dir = sysconfig.get_paths().get("include")
+        if python_include_dir:
+            cmake_args.extend([
+                "-DPython3_INCLUDE_DIR={}".format(python_include_dir),
+                "-DPYTHON_INCLUDE_DIR={}".format(python_include_dir),
+            ])
 
         cmake_build_args = ['--config', config, '--', '-j']
 
