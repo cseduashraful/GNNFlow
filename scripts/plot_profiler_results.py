@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 try:
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
 except ImportError as exc:
     raise SystemExit(
         "matplotlib is required to generate profiler plots. "
@@ -217,6 +218,32 @@ def overview_run_label(run: ProfileRun, shared_context: Dict[str, Any]) -> str:
     if len(extras) == 0:
         return primary
     return primary + "\n" + fill(" | ".join(extras), width=24)
+
+
+def can_use_grouped_overview(runs: Sequence[ProfileRun]) -> bool:
+    if len(runs) == 0:
+        return False
+
+    shared_context = build_overview_context(runs)
+    required_shared_keys = [
+        "dataset",
+        "cache",
+        "world_size",
+        "edge_cache_ratio",
+        "node_cache_ratio",
+        "snapshot_time_window",
+    ]
+    if any(shared_context[key] is None for key in required_shared_keys):
+        return False
+
+    seen_pairs = set()
+    for run in runs:
+        pair = (run.model, run.batch_size)
+        if pair in seen_pairs:
+            return False
+        seen_pairs.add(pair)
+
+    return len({run.model for run in runs}) >= 2
 
 
 def nested_get(value: Any, *keys: str) -> Any:
@@ -519,7 +546,100 @@ def plot_metric_bars(ax, runs: Sequence[ProfileRun], title: str, ylabel: str,
                 va="center", ha="left", fontsize=8)
 
 
-def plot_overview_dashboard(runs: Sequence[ProfileRun], output_path: Path):
+def plot_overview_dashboard_grouped(runs: Sequence[ProfileRun], output_path: Path):
+    metric_specs = [
+        ("Avg Step Time", "ms",
+         lambda run: None if run.step_time_avg_sec is None
+         else run.step_time_avg_sec * 1000.0),
+        ("Throughput", "samples/s", lambda run: run.throughput_avg),
+        ("Peak Allocated", "GiB", lambda run: maybe_gib(run.peak_allocated_bytes)),
+        ("Peak Reserved", "GiB", lambda run: maybe_gib(run.peak_reserved_bytes)),
+        ("Avg GPU Load", "%", lambda run: run.gpu_load_avg_pct),
+        ("Avg GPU Mem Util", "%", lambda run: run.gpu_memory_util_avg_pct),
+        ("Avg GPU Mem Used", "MB", lambda run: run.gpu_memory_used_avg_mb),
+        ("Peak RSS", "GiB", lambda run: maybe_gib(run.cpu_max_rss_bytes)),
+    ]
+
+    shared_context = build_overview_context(runs)
+    models = list(dict.fromkeys(run.model for run in runs))
+    batch_sizes = sorted({run.batch_size for run in runs})
+    run_lookup = {(run.model, run.batch_size): run for run in runs}
+
+    figure_height = max(6.8, len(batch_sizes) * 0.84)
+    figure, axes = plt.subplots(
+        2, 4, figsize=(19.5, figure_height), sharey=True, constrained_layout=False)
+    axes_list = list(axes.flat)
+    group_centers = list(range(len(batch_sizes)))
+    group_height = 0.78
+    bar_height = group_height / max(1, len(models))
+
+    for axis_index, (axis, (title, ylabel, accessor)) in enumerate(zip(axes_list, metric_specs)):
+        for model_index, model in enumerate(models):
+            offset = -group_height / 2 + (model_index + 0.5) * bar_height
+            positions: List[float] = []
+            values: List[float] = []
+            for center, batch_size in zip(group_centers, batch_sizes):
+                run = run_lookup.get((model, batch_size))
+                raw_value = None if run is None else accessor(run)
+                if raw_value is None:
+                    continue
+                positions.append(center + offset)
+                values.append(float(raw_value))
+
+            if len(values) == 0:
+                continue
+
+            axis.barh(
+                positions,
+                values,
+                height=bar_height * 0.86,
+                color=model_color(model),
+                alpha=0.95,
+            )
+
+        axis.set_title(title)
+        axis.set_xlabel(ylabel)
+        axis.set_yticks(group_centers)
+        if axis_index % 4 == 0:
+            axis.set_yticklabels([f"bs={batch_size}" for batch_size in batch_sizes])
+            axis.tick_params(axis="y", labelsize=9)
+        else:
+            axis.set_yticklabels([])
+            axis.tick_params(axis="y", left=False, labelleft=False)
+        axis.invert_yaxis()
+        axis.margins(y=0.06)
+        axis.xaxis.grid(True, alpha=0.25)
+        axis.yaxis.grid(False)
+
+    legend_handles = [
+        Patch(facecolor=model_color(model), label=model)
+        for model in models
+    ]
+    subtitle = overview_context_subtitle(shared_context)
+    if subtitle != "":
+        subtitle = subtitle + " | grouped by batch size"
+    else:
+        subtitle = "Grouped by batch size"
+
+    figure.legend(
+        legend_handles,
+        [handle.get_label() for handle in legend_handles],
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.944),
+        ncol=min(4, len(legend_handles)),
+        frameon=False,
+        handlelength=1.5,
+        columnspacing=1.6,
+    )
+    figure.text(0.5, 0.968, subtitle, ha="center", va="top", fontsize=10)
+    figure.suptitle("Profiler Overview", fontsize=16, y=0.992)
+    figure.subplots_adjust(left=0.07, right=0.995, top=0.86, bottom=0.07,
+                           wspace=0.15, hspace=0.26)
+    figure.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(figure)
+
+
+def plot_overview_dashboard_fallback(runs: Sequence[ProfileRun], output_path: Path):
     metric_specs = [
         ("Avg Step Time", "ms",
          metric_values(runs, lambda run: None if run.step_time_avg_sec is None
@@ -586,6 +706,13 @@ def plot_overview_dashboard(runs: Sequence[ProfileRun], output_path: Path):
     figure.subplots_adjust(left=0.035, right=0.995, top=top_margin, bottom=0.06)
     figure.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(figure)
+
+
+def plot_overview_dashboard(runs: Sequence[ProfileRun], output_path: Path):
+    if can_use_grouped_overview(runs):
+        plot_overview_dashboard_grouped(runs, output_path)
+        return
+    plot_overview_dashboard_fallback(runs, output_path)
 
 
 def plot_stacked_breakdown(runs: Sequence[ProfileRun], output_path: Path,
