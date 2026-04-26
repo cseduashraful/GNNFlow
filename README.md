@@ -151,7 +151,8 @@ Optional profiling flags:
 Use `scripts/plot_profiler_results.py` to generate comparison plots from the
 saved profiler summaries. The script reads runs from `profiles/`, filters them
 by config, keeps the latest run per config by default, and generates filenames
-based on the selected models, datasets, and batch sizes.
+based on the selected models, datasets, and batch sizes. Plot files are written
+as PDF by default.
 
 Example:
 
@@ -174,6 +175,7 @@ Useful flags:
 
 - `--profiles-dir <path>`: read profiler outputs from a different directory
 - `--output-dir <path>`: write plots somewhere else
+- `--formats <fmt...>`: output formats, e.g. `pdf png` (default: `pdf`)
 - `--caches <names...>`: filter by cache policy
 - `--world-sizes <ints...>`: filter by number of ranks / GPUs
 - `--edge-cache-ratios <floats...>`: filter by edge cache ratio

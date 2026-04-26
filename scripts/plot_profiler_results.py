@@ -6,6 +6,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from textwrap import fill
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 try:
@@ -15,6 +16,20 @@ except ImportError as exc:
         "matplotlib is required to generate profiler plots. "
         "Install it with `pip install matplotlib`."
     ) from exc
+
+plt.rcParams.update({
+    "figure.dpi": 160,
+    "savefig.dpi": 200,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.2,
+    "grid.linestyle": "--",
+    "font.size": 10,
+    "axes.titlesize": 12,
+    "axes.labelsize": 10,
+    "legend.fontsize": 9,
+})
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -100,13 +115,21 @@ class ProfileRun:
         )
 
     def run_label(self) -> str:
-        return (
-            f"{self.model}\n"
-            f"{self.dataset}\n"
-            f"bs={self.batch_size}\n"
-            f"{self.cache}\n"
-            f"ws={self.world_size}"
-        )
+        parts = [
+            self.model,
+            self.dataset,
+            f"bs={self.batch_size}",
+            self.cache,
+            f"ws={self.world_size}",
+        ]
+        if self.edge_cache_ratio != 0 or self.node_cache_ratio != 0:
+            parts.append(f"e={self.edge_cache_ratio:g}/n={self.node_cache_ratio:g}")
+        if self.snapshot_time_window != 0:
+            parts.append(f"tw={self.snapshot_time_window:g}")
+        return " | ".join(parts)
+
+    def wrapped_run_label(self, width: int = 34) -> str:
+        return fill(self.run_label(), width=width)
 
     def batch_group_label(self) -> str:
         return (
@@ -384,17 +407,26 @@ def metric_values(runs: Sequence[ProfileRun], accessor) -> List[Optional[float]]
 
 def plot_metric_bars(ax, runs: Sequence[ProfileRun], title: str, ylabel: str,
                      values: Sequence[Optional[float]], color: str):
-    x_positions = list(range(len(runs)))
+    y_positions = list(range(len(runs)))
     heights = [0.0 if value is None else float(value) for value in values]
-    ax.bar(x_positions, heights, color=color)
+    ax.barh(y_positions, heights, color=color)
     ax.set_title(title)
-    ax.set_ylabel(ylabel)
-    ax.set_xticks(x_positions)
-    ax.set_xticklabels([run.run_label() for run in runs], rotation=35, ha="right")
-    for x_position, value in zip(x_positions, values):
-        if value is None:
-            ax.text(x_position, 0, "n/a", rotation=90,
-                    va="bottom", ha="center", fontsize=8)
+    ax.set_xlabel(ylabel)
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels([run.wrapped_run_label() for run in runs])
+    ax.invert_yaxis()
+    ax.xaxis.grid(True, alpha=0.25)
+    ax.yaxis.grid(False)
+    for y_position, plotted_value, raw_value in zip(y_positions, heights, values):
+        if raw_value is None:
+            ax.text(0, y_position, "n/a", va="center", ha="left", fontsize=8)
+            continue
+        if plotted_value == 0:
+            continue
+        offset = max(plotted_value * 0.01, 0.02)
+        label = f"{raw_value:.2f}" if abs(raw_value) < 100 else f"{raw_value:.1f}"
+        ax.text(plotted_value + offset, y_position, label,
+                va="center", ha="left", fontsize=8)
 
 
 def plot_overview_dashboard(runs: Sequence[ProfileRun], output_path: Path):
@@ -418,14 +450,17 @@ def plot_overview_dashboard(runs: Sequence[ProfileRun], output_path: Path):
          metric_values(runs, lambda run: maybe_gib(run.cpu_max_rss_bytes))),
     ]
 
-    figure_width = max(14.0, len(runs) * 2.2)
-    figure, axes = plt.subplots(2, 4, figsize=(figure_width, 8.5))
+    figure_height = max(7.5, len(runs) * 0.72)
+    figure, axes = plt.subplots(2, 4, figsize=(22, figure_height), sharey=True)
     palette = plt.get_cmap("tab10")
-    for axis, (title, ylabel, values) in zip(axes.flat, metric_specs):
+    for axis_index, (axis, (title, ylabel, values)) in enumerate(zip(axes.flat, metric_specs)):
         plot_metric_bars(axis, runs, title, ylabel, values, palette(0))
+        if axis_index % 4 != 0:
+            axis.set_yticklabels([])
+            axis.set_ylabel("")
 
     figure.suptitle("Profiler Overview", fontsize=16)
-    figure.tight_layout(rect=(0, 0, 1, 0.96))
+    figure.tight_layout(rect=(0, 0, 1, 0.97))
     figure.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(figure)
 
@@ -435,10 +470,10 @@ def plot_stacked_breakdown(runs: Sequence[ProfileRun], output_path: Path,
                            colors: Sequence[str], title: str,
                            value_getter, ylabel: str,
                            normalize: bool = False):
-    x_positions = list(range(len(runs)))
+    y_positions = list(range(len(runs)))
     bottoms = [0.0] * len(runs)
-    figure_width = max(10.0, len(runs) * 1.8)
-    figure, axis = plt.subplots(figsize=(figure_width, 7))
+    figure_height = max(5.5, len(runs) * 0.6)
+    figure, axis = plt.subplots(figsize=(16, figure_height))
 
     for color, (stage_key, stage_label) in zip(colors, stage_order):
         raw_values = [value_getter(run, stage_key) for run in runs]
@@ -457,15 +492,18 @@ def plot_stacked_breakdown(runs: Sequence[ProfileRun], output_path: Path,
         else:
             plot_values = [0.0 if value is None else float(value) for value in raw_values]
 
-        axis.bar(x_positions, plot_values, bottom=bottoms,
-                 color=color, label=stage_label)
+        axis.barh(y_positions, plot_values, left=bottoms,
+                  color=color, label=stage_label)
         bottoms = [bottom + value for bottom, value in zip(bottoms, plot_values)]
 
     axis.set_title(title)
-    axis.set_ylabel(ylabel)
-    axis.set_xticks(x_positions)
-    axis.set_xticklabels([run.run_label() for run in runs], rotation=35, ha="right")
-    axis.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0))
+    axis.set_xlabel(ylabel)
+    axis.set_yticks(y_positions)
+    axis.set_yticklabels([run.wrapped_run_label() for run in runs])
+    axis.invert_yaxis()
+    axis.xaxis.grid(True, alpha=0.25)
+    axis.yaxis.grid(False)
+    axis.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0))
     figure.tight_layout()
     figure.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(figure)
@@ -504,7 +542,7 @@ def plot_batch_scaling(runs: Sequence[ProfileRun], output_path: Path):
         ("Avg GPU Mem Util", "%", lambda run: run.gpu_memory_util_avg_pct),
     ]
 
-    figure, axes = plt.subplots(2, 3, figsize=(16, 8.5))
+    figure, axes = plt.subplots(2, 3, figsize=(17, 9))
     palette = plt.get_cmap("tab10")
 
     for axis, (title, ylabel, accessor) in zip(axes.flat, metric_specs):
@@ -600,6 +638,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-prefix", type=str, default=None,
         help="Optional filename prefix for generated plots")
+    parser.add_argument(
+        "--formats", nargs="*", default=["pdf"],
+        help="Output plot formats, e.g. pdf png (default: pdf)")
     parser.add_argument("--models", nargs="*", default=None,
                         help="Models to include, e.g. TGN TGAT")
     parser.add_argument("--datasets", nargs="*", default=None,
@@ -640,44 +681,48 @@ def main():
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output_prefix = build_output_prefix(args, runs)
+    formats = [fmt.lower().lstrip(".") for fmt in args.formats]
 
     write_selected_runs_csv(
         runs, args.output_dir / f"{output_prefix}_selected-runs.csv")
-    plot_overview_dashboard(
-        runs, args.output_dir / f"{output_prefix}_overview.png")
-    plot_stacked_breakdown(
-        runs,
-        args.output_dir / f"{output_prefix}_train-stage-breakdown.png",
-        TRAIN_STAGE_ORDER,
-        TRAIN_STAGE_COLORS,
-        "Training Stage Breakdown",
-        lambda run, stage_key: None if run.train_stage_time_sec.get(stage_key) is None
-        else run.train_stage_time_sec[stage_key] * 1000.0,
-        "Time (ms)",
-        normalize=False,
-    )
-    plot_stacked_breakdown(
-        runs,
-        args.output_dir / f"{output_prefix}_train-stage-share.png",
-        TRAIN_STAGE_ORDER,
-        TRAIN_STAGE_COLORS,
-        "Training Stage Share",
-        lambda run, stage_key: run.train_stage_time_sec.get(stage_key),
-        "Share of step time (%)",
-        normalize=True,
-    )
-    plot_stacked_breakdown(
-        runs,
-        args.output_dir / f"{output_prefix}_setup-breakdown.png",
-        SETUP_STAGE_ORDER,
-        SETUP_STAGE_COLORS,
-        "Setup Stage Breakdown",
-        lambda run, stage_key: run.setup_time_sec.get(stage_key),
-        "Time (s)",
-        normalize=False,
-    )
-    batch_scaling_created = plot_batch_scaling(
-        runs, args.output_dir / f"{output_prefix}_batch-scaling.png")
+    batch_scaling_created = False
+    for plot_format in formats:
+        plot_overview_dashboard(
+            runs, args.output_dir / f"{output_prefix}_overview.{plot_format}")
+        plot_stacked_breakdown(
+            runs,
+            args.output_dir / f"{output_prefix}_train-stage-breakdown.{plot_format}",
+            TRAIN_STAGE_ORDER,
+            TRAIN_STAGE_COLORS,
+            "Training Stage Breakdown",
+            lambda run, stage_key: None if run.train_stage_time_sec.get(stage_key) is None
+            else run.train_stage_time_sec[stage_key] * 1000.0,
+            "Time (ms)",
+            normalize=False,
+        )
+        plot_stacked_breakdown(
+            runs,
+            args.output_dir / f"{output_prefix}_train-stage-share.{plot_format}",
+            TRAIN_STAGE_ORDER,
+            TRAIN_STAGE_COLORS,
+            "Training Stage Share",
+            lambda run, stage_key: run.train_stage_time_sec.get(stage_key),
+            "Share of step time (%)",
+            normalize=True,
+        )
+        plot_stacked_breakdown(
+            runs,
+            args.output_dir / f"{output_prefix}_setup-breakdown.{plot_format}",
+            SETUP_STAGE_ORDER,
+            SETUP_STAGE_COLORS,
+            "Setup Stage Breakdown",
+            lambda run, stage_key: run.setup_time_sec.get(stage_key),
+            "Time (s)",
+            normalize=False,
+        )
+        batch_scaling_created = plot_batch_scaling(
+            runs, args.output_dir / f"{output_prefix}_batch-scaling.{plot_format}") \
+            or batch_scaling_created
 
     print(f"Loaded {len(runs)} profiler runs.")
     print(f"Plots written to {args.output_dir}")
