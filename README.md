@@ -146,6 +146,53 @@ Optional profiling flags:
 - `--profile-export-memory-timeline`: export a memory timeline if supported by the installed torch version
 - `--no-profile-record-shapes`: disable operator shape capture if you want lower profiler overhead
 
+### Profiling sweep script
+
+If you want to profile many model / batch-size combinations without rewriting
+commands, use:
+
+```sh
+./scripts/run_profile_sweep.sh
+```
+
+Edit the `USER CONFIG` block near the top of
+`[scripts/run_profile_sweep.sh](/Users/mdashrafulislam/codex/GNNFlow/scripts/run_profile_sweep.sh)`
+to define:
+
+- `DATASETS`
+- `MODELS`
+- `BATCH_SIZES`
+- cache settings
+- number of GPUs (`NPROC_PER_NODE`)
+- all profiler schedule parameters
+
+The script:
+
+- runs every dataset/model/batch-size combination
+- writes profiler outputs under `profiles/`
+- writes a separate log file for each run under `profiles/logs/`
+
+You can also keep reusable configs in separate files and pass one in:
+
+```sh
+./scripts/run_profile_sweep.sh ./scripts/profile_sweep_config.sh
+```
+
+That config file is just a shell file that overrides variables from the script,
+for example:
+
+```sh
+DATASETS=(REDDIT)
+MODELS=(TGN TGAT GRAPHSAGE)
+BATCH_SIZES=(2000 4000 8000 16000)
+NPROC_PER_NODE="4"
+PROFILE_WAIT="1"
+PROFILE_WARMUP="1"
+PROFILE_ACTIVE="6"
+PROFILE_REPEAT="1"
+PROFILE_ONLY="1"
+```
+
 ## Plot profiler results
 
 Use `scripts/plot_profiler_results.py` to generate comparison plots from the
