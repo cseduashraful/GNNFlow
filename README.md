@@ -4,47 +4,81 @@ A comprehensive framework for training graph neural networks on dynamic graphs.
 
 NB: this is an ongoing work.
 
-## Install
+## Clone
 
-Our development environment:
-- Ubuntu 20.04LTS
-- g++ 9.4
-- CUDA 11.3 / 11.6
-- cmake 3.23
+Clone the `profile` branch and initialize the submodules:
+
+```sh
+git clone --branch profile --recursive <repo-url>
+cd GNNFlow
+git submodule update --init --recursive
+```
+
+If you already cloned the repository without submodules, run:
+
+```sh
+git submodule update --init --recursive
+```
+
+## Build
+
+The `profile` branch has been tested on a Linux cluster environment with:
+- Python 3.10
+- PyTorch 2.3.1
+- DGL with a matching CUDA build
+- gcc 9.4.0
+- CUDA 11.8
 
 Dependencies:
-- torch >= 1.10
-- dgl (CUDA version) 
+- torch
+- dgl (CUDA version)
 
-Compile and install: 
+On the cluster, load the compiler and CUDA modules first, then build:
+
 ```sh
+module purge
+module load gcc/9.4.0
+module load cuda/11.8
 python setup.py install
 ```
 
-For debug mode,
-```sh
-DEBUG=1 pip install -v -e .
-```
+This installs both the Python package and the `libgnnflow` CUDA extension into the current environment.
 
 ## Prepare data
 
 ```sh
-cd scripts/ && ./download_data.sh
+cd scripts
+./download_data.sh
+cd ..
 ```
 
-## Train
+Notes:
+- `scripts/download_data.sh` currently downloads the REDDIT dataset by default.
+- The script works with `aria2c`, `curl`, or `wget`.
+- If you want additional datasets, uncomment the corresponding lines in `scripts/download_data.sh`.
 
-**Multi-GPU single machine**
+## Run
 
-Training [TGN](https://arxiv.org/pdf/2006.10637v2.pdf) model on the REDDIT dataset with LRU feature cache (cache ratio=0.2) on four GPUs.
+Run the launcher from inside `scripts/`. The script uses relative paths, so invoking it from the repository root is not supported.
+
+Verified single-node, 4-GPU REDDIT training command:
+
 ```sh
-./scripts/run_offline.sh TGN REDDIT LRUCache 0.2 4
+cd scripts
+./run_offline.sh TGN REDDIT LRUCache 0.2 0.2 0 4
 ```
 
-**Distributed training**
+Argument order for `scripts/run_offline.sh`:
+- `MODEL`
+- `DATA`
+- `CACHE`
+- `EDGE_CACHE_RATIO`
+- `NODE_CACHE_RATIO`
+- `TIME_WINDOW`
+- `NPROC_PER_NODE`
 
-Training TGN model on the REDDIT dataset with LRU feature cache (cache ratio=0.2) and hash-based graph partitioning strategy.
+The launcher redirects output to a log file in `scripts/`. For the command above, check:
+
 ```sh
-./scripts/run_offline.sh TGN REDDIT LRUCache 0.2 hash 
+tail -f TGN_REDDIT_LRUCache_0.2_0.2_0_presampling.log
 ```
-
