@@ -155,6 +155,70 @@ class ProfileRun:
         )
 
 
+def model_color(model: str) -> str:
+    return MODEL_COLORS.get(model, "#4E79A7")
+
+
+def shared_run_value(runs: Sequence[ProfileRun], accessor) -> Any:
+    values = {accessor(run) for run in runs}
+    if len(values) != 1:
+        return None
+    return next(iter(values))
+
+
+def build_overview_context(runs: Sequence[ProfileRun]) -> Dict[str, Any]:
+    return {
+        "dataset": shared_run_value(runs, lambda run: run.dataset),
+        "cache": shared_run_value(runs, lambda run: run.cache),
+        "world_size": shared_run_value(runs, lambda run: run.world_size),
+        "edge_cache_ratio": shared_run_value(runs, lambda run: run.edge_cache_ratio),
+        "node_cache_ratio": shared_run_value(runs, lambda run: run.node_cache_ratio),
+        "snapshot_time_window": shared_run_value(
+            runs, lambda run: run.snapshot_time_window),
+    }
+
+
+def overview_context_subtitle(shared_context: Dict[str, Any]) -> str:
+    parts: List[str] = []
+    if shared_context["dataset"] is not None:
+        parts.append(str(shared_context["dataset"]))
+    if shared_context["cache"] is not None:
+        parts.append(str(shared_context["cache"]))
+    if shared_context["world_size"] is not None:
+        parts.append(f"ws={shared_context['world_size']}")
+    if shared_context["edge_cache_ratio"] is not None and \
+            shared_context["node_cache_ratio"] is not None:
+        parts.append(
+            f"e={shared_context['edge_cache_ratio']:g}/n="
+            f"{shared_context['node_cache_ratio']:g}"
+        )
+    if shared_context["snapshot_time_window"] not in (None, 0):
+        parts.append(f"tw={shared_context['snapshot_time_window']:g}")
+    return " | ".join(parts)
+
+
+def overview_run_label(run: ProfileRun, shared_context: Dict[str, Any]) -> str:
+    primary = f"{run.model} | bs={run.batch_size}"
+    extras: List[str] = []
+
+    if shared_context["dataset"] is None:
+        extras.append(run.dataset)
+    if shared_context["cache"] is None:
+        extras.append(run.cache)
+    if shared_context["world_size"] is None:
+        extras.append(f"ws={run.world_size}")
+    if shared_context["edge_cache_ratio"] is None or \
+            shared_context["node_cache_ratio"] is None:
+        extras.append(f"e={run.edge_cache_ratio:g}/n={run.node_cache_ratio:g}")
+    if shared_context["snapshot_time_window"] is None and \
+            run.snapshot_time_window != 0:
+        extras.append(f"tw={run.snapshot_time_window:g}")
+
+    if len(extras) == 0:
+        return primary
+    return primary + "\n" + fill(" | ".join(extras), width=24)
+
+
 def nested_get(value: Any, *keys: str) -> Any:
     current = value
     for key in keys:
@@ -422,11 +486,15 @@ def metric_values(runs: Sequence[ProfileRun], accessor) -> List[Optional[float]]
 
 
 def plot_metric_bars(ax, runs: Sequence[ProfileRun], title: str, ylabel: str,
-                     values: Sequence[Optional[float]], color: str,
+                     values: Sequence[Optional[float]], colors,
                      show_y_labels: bool = True):
     y_positions = list(range(len(runs)))
     heights = [0.0 if value is None else float(value) for value in values]
-    ax.barh(y_positions, heights, color=color)
+    if isinstance(colors, str):
+        bar_colors = [colors] * len(runs)
+    else:
+        bar_colors = list(colors)
+    ax.barh(y_positions, heights, color=bar_colors, height=0.68)
     ax.set_title(title)
     ax.set_xlabel(ylabel)
     ax.set_yticks(y_positions)
@@ -436,6 +504,7 @@ def plot_metric_bars(ax, runs: Sequence[ProfileRun], title: str, ylabel: str,
         ax.set_yticklabels([])
         ax.tick_params(axis="y", left=False, labelleft=False)
     ax.invert_yaxis()
+    ax.margins(y=0.03)
     ax.xaxis.grid(True, alpha=0.25)
     ax.yaxis.grid(False)
     for y_position, plotted_value, raw_value in zip(y_positions, heights, values):
@@ -471,10 +540,13 @@ def plot_overview_dashboard(runs: Sequence[ProfileRun], output_path: Path):
          metric_values(runs, lambda run: maybe_gib(run.cpu_max_rss_bytes))),
     ]
 
-    figure_height = max(7.5, len(runs) * 0.72)
-    figure = plt.figure(figsize=(24, figure_height))
+    shared_context = build_overview_context(runs)
+    overview_colors = [model_color(run.model) for run in runs]
+
+    figure_height = max(6.6, len(runs) * 0.56)
+    figure = plt.figure(figsize=(20.2, figure_height))
     grid = figure.add_gridspec(
-        2, 5, width_ratios=[3.3, 3.2, 3.2, 3.2, 3.2], wspace=0.14, hspace=0.3)
+        2, 5, width_ratios=[2.1, 2.8, 2.7, 2.7, 2.7], wspace=0.14, hspace=0.24)
     label_axis = figure.add_subplot(grid[:, 0])
     axes = [
         figure.add_subplot(grid[0, 1]),
@@ -492,19 +564,26 @@ def plot_overview_dashboard(runs: Sequence[ProfileRun], output_path: Path):
     label_axis.set_ylim(-0.5, len(runs) - 0.5)
     label_axis.invert_yaxis()
     label_axis.axis("off")
-    label_axis.set_title("Profiled Run", loc="left", pad=10)
+    label_axis.set_title("Run Config", loc="left", pad=6)
     for y_position, run in zip(y_positions, runs):
         label_axis.text(
-            0.0, y_position, run.wrapped_run_label(width=28),
-            va="center", ha="left", fontsize=9)
+            0.0, y_position, overview_run_label(run, shared_context),
+            va="center", ha="left", fontsize=9, color=model_color(run.model),
+            fontweight="semibold")
 
-    palette = plt.get_cmap("tab10")
     for axis, (title, ylabel, values) in zip(axes, metric_specs):
-        plot_metric_bars(axis, runs, title, ylabel, values, palette(0),
+        plot_metric_bars(axis, runs, title, ylabel, values, overview_colors,
                          show_y_labels=False)
 
-    figure.suptitle("Profiler Overview", fontsize=16)
-    figure.subplots_adjust(left=0.04, right=0.995, top=0.94, bottom=0.06)
+    subtitle = overview_context_subtitle(shared_context)
+    title_y = 0.985
+    top_margin = 0.89
+    if subtitle != "":
+        figure.text(0.53, 0.955, subtitle, ha="center", va="top", fontsize=10)
+        top_margin = 0.875
+
+    figure.suptitle("Profiler Overview", fontsize=16, y=title_y)
+    figure.subplots_adjust(left=0.035, right=0.995, top=top_margin, bottom=0.06)
     figure.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(figure)
 
@@ -665,28 +744,30 @@ def plot_batch_scaling(runs: Sequence[ProfileRun], output_path: Path):
         subtitle_parts.append(f"edge={common_edge_ratios[0]:g}")
     if len(common_node_ratios) == 1:
         subtitle_parts.append(f"node={common_node_ratios[0]:g}")
-    subtitle = " | ".join(subtitle_parts)
+    subtitle = fill(" | ".join(subtitle_parts), width=72)
 
     if not single_group:
+        title_y = 0.992
+        subtitle_y = 0.962
+        legend_y = 0.932
         figure.legend(
             list(legend_handles.values()),
             list(legend_handles.keys()),
             loc="upper center",
-            bbox_to_anchor=(0.5, 0.952),
+            bbox_to_anchor=(0.5, legend_y),
             ncol=min(4, len(legend_handles)),
             frameon=False,
         )
-        title_y = 0.985
         if subtitle != "":
-            figure.text(0.5, 0.972, subtitle, ha="center", va="top", fontsize=10)
-            top_margin = 0.84
+            figure.text(0.5, subtitle_y, subtitle, ha="center", va="top", fontsize=9.5)
+            top_margin = 0.79
         else:
-            top_margin = 0.86
+            top_margin = 0.81
     else:
-        subtitle = fill(plotted_groups[0][0].batch_group_label(), width=90)
-        figure.text(0.5, 0.952, subtitle, ha="center", va="top", fontsize=10)
-        title_y = 0.988
-        top_margin = 0.88
+        subtitle = fill(plotted_groups[0][0].batch_group_label(), width=78)
+        figure.text(0.5, 0.958, subtitle, ha="center", va="top", fontsize=9.5)
+        title_y = 0.992
+        top_margin = 0.85
 
     figure.suptitle("Profiler Batch-Size Scaling", fontsize=16, y=title_y)
     figure.subplots_adjust(top=top_margin, wspace=0.22, hspace=0.22)
