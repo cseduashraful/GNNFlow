@@ -7,21 +7,39 @@ EDGE_CACHE_RATIO="${4:-0.2}" # default 20% of cache
 NODE_CACHE_RATIO="${5:-0.2}" # default 20% of cache
 TIME_WINDOW="${6:-0}" # default 0
 NPROC_PER_NODE=${7:-1}
+EXTRA_ARGS=("${@:8}")
 
 if [[ $NPROC_PER_NODE -gt 1 ]]; then
-    cmd="torchrun \
-        --nnodes=1 --nproc_per_node=$NPROC_PER_NODE \
-        --standalone \
-        offline_edge_prediction.py --model $MODEL --data $DATA \
-        --cache $CACHE --edge-cache-ratio $EDGE_CACHE_RATIO \
-        --node-cache-ratio $NODE_CACHE_RATIO --snapshot-time-window $TIME_WINDOW \
-        --ingestion-batch-size 10000000"
+    cmd=(
+        torchrun
+        --nnodes=1
+        --nproc_per_node="$NPROC_PER_NODE"
+        --standalone
+        offline_edge_prediction.py
+        --model "$MODEL"
+        --data "$DATA"
+        --cache "$CACHE"
+        --edge-cache-ratio "$EDGE_CACHE_RATIO"
+        --node-cache-ratio "$NODE_CACHE_RATIO"
+        --snapshot-time-window "$TIME_WINDOW"
+        --ingestion-batch-size 10000000
+        "${EXTRA_ARGS[@]}"
+    )
 else
-    cmd="python offline_edge_prediction.py --model $MODEL --data $DATA \
-        --cache $CACHE --edge-cache-ratio $EDGE_CACHE_RATIO \
-        --node-cache-ratio $NODE_CACHE_RATIO --snapshot-time-window $TIME_WINDOW \
-        --ingestion-batch-size 10000000"
+    cmd=(
+        python
+        offline_edge_prediction.py
+        --model "$MODEL"
+        --data "$DATA"
+        --cache "$CACHE"
+        --edge-cache-ratio "$EDGE_CACHE_RATIO"
+        --node-cache-ratio "$NODE_CACHE_RATIO"
+        --snapshot-time-window "$TIME_WINDOW"
+        --ingestion-batch-size 10000000
+        "${EXTRA_ARGS[@]}"
+    )
 fi
 
-echo $cmd
-OMP_NUM_THREADS=8 exec $cmd > ${MODEL}_${DATA}_${CACHE}_${EDGE_CACHE_RATIO}_${NODE_CACHE_RATIO}_${TIME_WINDOW}_presampling.log 2>&1
+printf '%q ' "${cmd[@]}"
+printf '\n'
+OMP_NUM_THREADS=8 exec "${cmd[@]}" > "${MODEL}_${DATA}_${CACHE}_${EDGE_CACHE_RATIO}_${NODE_CACHE_RATIO}_${TIME_WINDOW}_presampling.log" 2>&1
