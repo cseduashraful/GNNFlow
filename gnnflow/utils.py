@@ -33,8 +33,55 @@ def rank():
     return torch.distributed.get_rank()
 
 
+def _is_project_root(path: str) -> bool:
+    return os.path.isfile(os.path.join(path, "setup.py")) and \
+        os.path.isdir(os.path.join(path, "gnnflow"))
+
+
+def _search_project_root(start_path: str) -> Optional[str]:
+    current = os.path.abspath(start_path)
+    while True:
+        if _is_project_root(current):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
 def get_project_root_dir() -> str:
+    env_root = os.environ.get("GNNFLOW_PROJECT_ROOT")
+    if env_root is not None:
+        env_root = os.path.abspath(env_root)
+        if _is_project_root(env_root):
+            return env_root
+
+    for start_path in [os.getcwd(), os.path.abspath(__file__)]:
+        project_root = _search_project_root(start_path)
+        if project_root is not None:
+            return project_root
+
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _resolve_feature_path(dataset_path: str, feature_name: str) -> Optional[str]:
+    for extension in (".npy", ".pt"):
+        path = os.path.join(dataset_path, feature_name + extension)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _load_feature_from_path(path: str, mmap_mode: Optional[str] = None):
+    if path.endswith(".npy"):
+        return np.load(path, mmap_mode=mmap_mode, allow_pickle=False)
+
+    feature = torch.load(path, map_location="cpu")
+    if isinstance(feature, np.ndarray):
+        return feature
+    if isinstance(feature, torch.Tensor):
+        return feature
+    return torch.as_tensor(feature)
 
 
 def load_dataset(dataset: str, data_dir: Optional[str] = None) -> \
@@ -234,12 +281,15 @@ def load_node_feat(dataset: str, data_dir: Optional[str] = None):
             del node_feat
     else:
         if rank() == 0:
-            path = os.path.join(dataset_path, 'node_features.npy')
-            if not os.path.exists(path):
-                raise ValueError('{} does not exist'.format(path))
+            path = _resolve_feature_path(dataset_path, 'node_features')
+            if path is None:
+                raise ValueError('{} does not exist'.format(
+                    os.path.join(dataset_path, 'node_features')))
 
-            node_feats = np.load(path, allow_pickle=False)
-            NODE_FEATS = torch.from_numpy(node_feats)
+            node_feats = _load_feature_from_path(path)
+            if isinstance(node_feats, np.ndarray):
+                node_feats = torch.from_numpy(node_feats)
+            NODE_FEATS = node_feats
 
     if rank() == 0:
         logging.info("Loaded node feature in %f seconds.", time.time() - start)
@@ -271,29 +321,29 @@ def load_feat(dataset: str, data_dir: Optional[str] = None,
         data_dir = os.path.join(get_project_root_dir(), "data")
 
     dataset_path = os.path.join(data_dir, dataset)
-    node_feat_path = os.path.join(dataset_path, 'node_features.npy')
-    edge_feat_path = os.path.join(dataset_path, 'edge_features.npy')
+    node_feat_path = _resolve_feature_path(dataset_path, 'node_features')
+    edge_feat_path = _resolve_feature_path(dataset_path, 'edge_features')
 
-    if not os.path.exists(node_feat_path) and \
-            not os.path.exists(edge_feat_path):
+    if node_feat_path is None and edge_feat_path is None:
         raise ValueError("Both {} and {} do not exist".format(
-            node_feat_path, edge_feat_path))
+            os.path.join(dataset_path, 'node_features.npy'),
+            os.path.join(dataset_path, 'edge_features.npy')))
 
     mmap_mode = "r+" if memmap else None
 
     node_feats = None
     edge_feats = None
     if not shared_memory or (shared_memory and local_rank == 0):
-        if os.path.exists(node_feat_path) and load_node:
-            node_feats = np.load(
-                node_feat_path, mmap_mode=mmap_mode, allow_pickle=False)
-            if not memmap:
+        if node_feat_path is not None and load_node:
+            node_feats = _load_feature_from_path(
+                node_feat_path, mmap_mode=mmap_mode)
+            if not memmap and isinstance(node_feats, np.ndarray):
                 node_feats = torch.from_numpy(node_feats)
 
-        if os.path.exists(edge_feat_path) and load_edge:
-            edge_feats = np.load(
-                edge_feat_path, mmap_mode=mmap_mode, allow_pickle=False)
-            if not memmap:
+        if edge_feat_path is not None and load_edge:
+            edge_feats = _load_feature_from_path(
+                edge_feat_path, mmap_mode=mmap_mode)
+            if not memmap and isinstance(edge_feats, np.ndarray):
                 edge_feats = torch.from_numpy(edge_feats)
 
     if shared_memory:
