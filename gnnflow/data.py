@@ -6,12 +6,12 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributed
-from torch._six import string_classes
 from torch.utils.data import BatchSampler, Dataset, Sampler
 
 from gnnflow.utils import DstRandEdgeSampler, RandEdgeSampler, local_rank
 
 np_str_obj_array_pattern = re.compile(r'[SaUO]')
+string_classes = (str, bytes)
 
 
 class EdgePredictionDataset(Dataset):
