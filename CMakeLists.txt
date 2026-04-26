@@ -34,7 +34,7 @@ set(PYBIND11_FINDPYTHON ON)
 if (DEFINED PYTHON_EXECUTABLE AND NOT DEFINED Python3_EXECUTABLE)
     set(Python3_EXECUTABLE "${PYTHON_EXECUTABLE}")
 endif()
-find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
 add_subdirectory(third_party/pybind11)
 
 
