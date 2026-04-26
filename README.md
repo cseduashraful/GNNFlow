@@ -41,10 +41,14 @@ Training [TGN](https://arxiv.org/pdf/2006.10637v2.pdf) model on the REDDIT datas
 ./scripts/run_offline.sh TGN REDDIT LRUCache 0.2 4
 ```
 
+`run_offline.sh` also supports the extended form:
+```sh
+./scripts/run_offline.sh MODEL DATA CACHE EDGE_CACHE_RATIO NODE_CACHE_RATIO TIME_WINDOW NPROC_PER_NODE
+```
+
 **Distributed training**
 
 Training TGN model on the REDDIT dataset with LRU feature cache (cache ratio=0.2) and hash-based graph partitioning strategy.
 ```sh
 ./scripts/run_offline.sh TGN REDDIT LRUCache 0.2 hash 
 ```
-
