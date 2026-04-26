@@ -548,7 +548,7 @@ def plot_batch_scaling(runs: Sequence[ProfileRun], output_path: Path):
     single_group = len(plotted_groups) == 1
 
     figure, axes = plt.subplots(
-        2, 3, figsize=(15.5, 8.2), sharex=True, constrained_layout=True)
+        2, 3, figsize=(15.5, 8.2), sharex=True, constrained_layout=False)
     palette = plt.get_cmap("tab10")
 
     for axis_index, (axis, (title, ylabel, accessor)) in enumerate(zip(axes.flat, metric_specs)):
@@ -598,15 +598,20 @@ def plot_batch_scaling(runs: Sequence[ProfileRun], output_path: Path):
     if not single_group:
         figure.legend(
             loc="upper center",
-            bbox_to_anchor=(0.5, 1.02),
+            bbox_to_anchor=(0.5, 0.955),
             ncol=min(2, len(plotted_groups)),
             frameon=False,
         )
+        title_y = 0.985
+        top_margin = 0.86
     else:
-        subtitle = plotted_groups[0][0].batch_group_label()
-        figure.text(0.5, 0.985, subtitle, ha="center", va="top", fontsize=10)
+        subtitle = fill(plotted_groups[0][0].batch_group_label(), width=90)
+        figure.text(0.5, 0.952, subtitle, ha="center", va="top", fontsize=10)
+        title_y = 0.988
+        top_margin = 0.88
 
-    figure.suptitle("Profiler Batch-Size Scaling", fontsize=16)
+    figure.suptitle("Profiler Batch-Size Scaling", fontsize=16, y=title_y)
+    figure.subplots_adjust(top=top_margin, wspace=0.22, hspace=0.22)
     figure.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(figure)
     return True
