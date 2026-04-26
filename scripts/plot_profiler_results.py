@@ -542,31 +542,71 @@ def plot_batch_scaling(runs: Sequence[ProfileRun], output_path: Path):
         ("Avg GPU Mem Util", "%", lambda run: run.gpu_memory_util_avg_pct),
     ]
 
-    figure, axes = plt.subplots(2, 3, figsize=(17, 9))
+    all_batch_sizes = sorted({run.batch_size for group in plotted_groups for run in group})
+    use_log_scale = len(all_batch_sizes) >= 3 and \
+        max(all_batch_sizes) / min(all_batch_sizes) >= 4
+    single_group = len(plotted_groups) == 1
+
+    figure, axes = plt.subplots(
+        2, 3, figsize=(15.5, 8.2), sharex=True, constrained_layout=True)
     palette = plt.get_cmap("tab10")
 
-    for axis, (title, ylabel, accessor) in zip(axes.flat, metric_specs):
+    for axis_index, (axis, (title, ylabel, accessor)) in enumerate(zip(axes.flat, metric_specs)):
         for group_index, group_runs in enumerate(plotted_groups):
             x_values = [run.batch_size for run in group_runs]
             y_values = [accessor(run) for run in group_runs]
             if all(value is None for value in y_values):
                 continue
+            plotted_y_values = [
+                math.nan if value is None else value for value in y_values]
             axis.plot(
                 x_values,
-                [math.nan if value is None else value for value in y_values],
+                plotted_y_values,
                 marker="o",
-                linewidth=2,
+                markersize=5.5,
+                linewidth=2.25,
                 color=palette(group_index % 10),
                 label=group_runs[0].batch_group_label(),
             )
+            if single_group:
+                for x_value, y_value in zip(x_values, plotted_y_values):
+                    if math.isnan(y_value):
+                        continue
+                    label = f"{y_value:.0f}" if abs(y_value) >= 100 else f"{y_value:.2f}"
+                    axis.annotate(
+                        label,
+                        (x_value, y_value),
+                        xytext=(0, 7),
+                        textcoords="offset points",
+                        ha="center",
+                        va="bottom",
+                        fontsize=8,
+                        color=palette(group_index % 10),
+                    )
         axis.set_title(title)
-        axis.set_xlabel("Batch Size")
         axis.set_ylabel(ylabel)
-        axis.grid(True, alpha=0.3)
+        axis.grid(True, alpha=0.22)
+        axis.set_xticks(all_batch_sizes)
+        axis.set_xticklabels([str(batch_size) for batch_size in all_batch_sizes])
+        if use_log_scale:
+            axis.set_xscale("log", base=2)
+        if axis_index < 3:
+            axis.tick_params(axis="x", labelbottom=False)
+        else:
+            axis.set_xlabel("Batch Size")
 
-    axes.flat[0].legend(loc="upper left", bbox_to_anchor=(1.02, 1.0))
+    if not single_group:
+        figure.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.02),
+            ncol=min(2, len(plotted_groups)),
+            frameon=False,
+        )
+    else:
+        subtitle = plotted_groups[0][0].batch_group_label()
+        figure.text(0.5, 0.985, subtitle, ha="center", va="top", fontsize=10)
+
     figure.suptitle("Profiler Batch-Size Scaling", fontsize=16)
-    figure.tight_layout(rect=(0, 0, 1, 0.96))
     figure.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(figure)
     return True
